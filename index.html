@@ -1,350 +1,3 @@
-<!-- <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Catch the Falling Stars</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #1e2133, #1e3c72);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            font-family: 'Arial', sans-serif;
-        }
-        
-        .game-container {
-            text-align: center;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-        }
-        
-        canvas {
-            border: 3px solid #ffd700;
-            border-radius: 10px;
-            background: linear-gradient(180deg, #001122, #11181f);
-            display: block;
-            margin: 0 auto;
-        }
-        
-        .instructions {
-            color: #ffd700;
-            margin-top: 15px;
-            font-size: 16px;
-        }
-        
-        .game-over {
-            color: #ff6b6b;
-            font-size: 24px;
-            font-weight: bold;
-            margin-top: 10px;
-        }
-    </style>
-</head>
-<body>
-    <div class="game-container">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        <div class="instructions">
-            Use ← → arrow keys to move the basket and catch falling stars!
-        </div>
-        <div id="gameOverText" class="game-over" style="display: none;">
-            Game Over! Press R to restart
-        </div>
-    </div>
-
-    <script>
-        // Canvas and context setup
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const gameOverText = document.getElementById('gameOverText');
-
-        // Game state variables
-        let gameState = {
-            score: 0,
-            highScore: localStorage.getItem('starCatcherHighScore') || 0,
-            hearts: 3,
-            consecutiveMisses: 0,
-            timeLeft: 60,
-            gameRunning: true,
-            starSpeed: 2,
-            lastSpeedIncrease: 0
-        };
-
-        // Game objects
-        let basket = {
-            x: 375,
-            y: 550,
-            width: 100,
-            height: 20,
-            speed: 8
-        };
-
-        let stars = [];
-        let keys = {};
-
-        // Star creation function
-        function createStar() {
-            return {
-                x: Math.random() * (canvas.width - 20),
-                y: -20,
-                size: 15,
-                speed: gameState.starSpeed + Math.random() * 2,
-                caught: false
-            };
-        }
-
-        // Draw star as five-point polygon
-        function drawStar(x, y, size) {
-            ctx.fillStyle = '#ffd700';
-            ctx.strokeStyle = '#ffed4e';
-            ctx.lineWidth = 2;
-            
-            ctx.beginPath();
-            for (let i = 0; i < 5; i++) {
-                const angle = (i * 144 - 90) * Math.PI / 180;
-                const outerRadius = size;
-                const innerRadius = size * 0.4;
-                
-                // Outer point
-                let px = x + Math.cos(angle) * outerRadius;
-                let py = y + Math.sin(angle) * outerRadius;
-                if (i === 0) ctx.moveTo(px, py);
-                else ctx.lineTo(px, py);
-                
-                // Inner point
-                const innerAngle = ((i * 144) + 72 - 90) * Math.PI / 180;
-                px = x + Math.cos(innerAngle) * innerRadius;
-                py = y + Math.sin(innerAngle) * innerRadius;
-                ctx.lineTo(px, py);
-            }
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-        }
-
-        // Draw basket as brown rectangle
-        function drawBasket() {
-            ctx.fillStyle = '#8B4513';
-            ctx.strokeStyle = '#654321';
-            ctx.lineWidth = 2;
-            
-            ctx.fillRect(basket.x, basket.y, basket.width, basket.height);
-            ctx.strokeRect(basket.x, basket.y, basket.width, basket.height);
-            
-            // Add basket handle details
-            ctx.fillStyle = '#A0522D';
-            ctx.fillRect(basket.x + 5, basket.y + 5, basket.width - 10, basket.height - 10);
-        }
-
-        // Draw hearts in top area
-        function drawHearts() {
-            for (let i = 0; i < 3; i++) {
-                const x = canvas.width - 150 + i * 30;
-                const y = 40;
-                
-                if (i < gameState.hearts) {
-                    ctx.fillStyle = '#ff0000';
-                } else {
-                    ctx.fillStyle = '#333333';
-                }
-                
-                // Draw heart shape
-                ctx.beginPath();
-                ctx.arc(x - 5, y - 3, 6, 0, Math.PI * 2);
-                ctx.arc(x + 5, y - 3, 6, 0, Math.PI * 2);
-                ctx.fill();
-                
-                ctx.beginPath();
-                ctx.moveTo(x - 10, y + 2);
-                ctx.lineTo(x, y + 12);
-                ctx.lineTo(x + 10, y + 2);
-                ctx.fill();
-            }
-        }
-
-        // Draw UI elements
-        function drawUI() {
-            ctx.fillStyle = '#ffd700';
-            ctx.font = '20px Arial';
-            
-            // Score (top-left)
-            ctx.fillText(`Score: ${gameState.score}`, 20, 30);
-            
-            // High Score (top-right)
-            ctx.fillText(`High Score: ${gameState.highScore}`, canvas.width - 200, 30);
-            
-            // Timer (top-center)
-            ctx.fillText(`Time: ${Math.ceil(gameState.timeLeft)}s`, canvas.width / 2 - 40, 30);
-            
-            // Draw hearts
-            drawHearts();
-        }
-
-        // Collision detection
-        function checkCollision(star, basket) {
-            return star.x < basket.x + basket.width &&
-                   star.x + star.size * 2 > basket.x &&
-                   star.y < basket.y + basket.height &&
-                   star.y + star.size * 2 > basket.y;
-        }
-
-        // Update game logic
-        function updateGame(deltaTime) {
-            if (!gameState.gameRunning) return;
-            
-            // Update timer
-            gameState.timeLeft -= deltaTime / 1000;
-            if (gameState.timeLeft <= 0) {
-                endGame();
-                return;
-            }
-            
-            // Increase speed every 15 seconds
-            const currentTime = 60 - gameState.timeLeft;
-            if (Math.floor(currentTime / 15) > gameState.lastSpeedIncrease) {
-                gameState.starSpeed += 1;
-                gameState.lastSpeedIncrease = Math.floor(currentTime / 15);
-            }
-            
-            // Move basket based on key input
-            if (keys['ArrowLeft'] && basket.x > 0) {
-                basket.x -= basket.speed;
-            }
-            if (keys['ArrowRight'] && basket.x < canvas.width - basket.width) {
-                basket.x += basket.speed;
-            }
-            
-            // Spawn new stars randomly
-            if (Math.random() < 0.02) {
-                stars.push(createStar());
-            }
-            
-            // Update stars
-            let missedThisFrame = false;
-            for (let i = stars.length - 1; i >= 0; i--) {
-                const star = stars[i];
-                star.y += star.speed;
-                
-                // Check collision with basket
-                if (checkCollision(star, basket) && !star.caught) {
-                    star.caught = true;
-                    gameState.score++;
-                    gameState.consecutiveMisses = 0;
-                    stars.splice(i, 1);
-                    continue;
-                }
-                
-                // Remove stars that fall off screen
-                if (star.y > canvas.height) {
-                    stars.splice(i, 1);
-                    if (!star.caught && !missedThisFrame) {
-                        gameState.consecutiveMisses++;
-                        missedThisFrame = true;
-                        
-                        // Lose heart after 3 consecutive misses
-                        if (gameState.consecutiveMisses >= 3) {
-                            gameState.hearts--;
-                            gameState.consecutiveMisses = 0;
-                            
-                            if (gameState.hearts <= 0) {
-                                endGame();
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Render game graphics
-        function render() {
-            // Clear canvas with gradient background
-            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            gradient.addColorStop(0, '#001122');
-            gradient.addColorStop(1, '#003366');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw stars
-            stars.forEach(star => {
-                drawStar(star.x + star.size, star.y + star.size, star.size);
-            });
-            
-            // Draw basket
-            drawBasket();
-            
-            // Draw UI
-            drawUI();
-        }
-
-        // End game function
-        function endGame() {
-            gameState.gameRunning = false;
-            
-            // Update high score
-            if (gameState.score > gameState.highScore) {
-                gameState.highScore = gameState.score;
-                localStorage.setItem('starCatcherHighScore', gameState.highScore);
-            }
-            
-            gameOverText.style.display = 'block';
-        }
-
-        // Reset game function
-        function resetGame() {
-            gameState.score = 0;
-            gameState.hearts = 3;
-            gameState.consecutiveMisses = 0;
-            gameState.timeLeft = 60;
-            gameState.gameRunning = true;
-            gameState.starSpeed = 2;
-            gameState.lastSpeedIncrease = 0;
-            
-            basket.x = 375;
-            stars = [];
-            
-            gameOverText.style.display = 'none';
-        }
-
-        // Event listeners for keyboard input
-        document.addEventListener('keydown', (e) => {
-            keys[e.key] = true;
-            
-            // Restart game with R key
-            if (e.key.toLowerCase() === 'r' && !gameState.gameRunning) {
-                resetGame();
-            }
-        });
-
-        document.addEventListener('keyup', (e) => {
-            keys[e.key] = false;
-        });
-
-        // Main game loop
-        let lastTime = 0;
-        function gameLoop(currentTime) {
-            const deltaTime = currentTime - lastTime;
-            lastTime = currentTime;
-            
-            updateGame(deltaTime);
-            render();
-            
-            requestAnimationFrame(gameLoop);
-        }
-
-        // Initialize and start the game
-        resetGame();
-        requestAnimationFrame(gameLoop);
-    </script>
-</body>
-</html> -->
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -536,18 +189,18 @@
         // Game state variables
         let gameState = {
             score: 0,
-            highScore: 0, // Removed localStorage for Claude.ai compatibility
+            highScore: 0,
             hearts: 3,
             gameRunning: true,
-            targetLifetime: 8000, // Target disappearing time
-            spawnRate: 0.004, // Target spawning frequency
+            targetLifetime: 6000, // Reduced from 8000 to 6000ms
+            desiredTargets: 4, // Always try to maintain this many targets
             gameTime: 0,
             lastDifficultyIncrease: 0,
-            maxTargets: 3, // Maximum targets on screen at once
-            targetSpeed: 0.8, // New: Target movement speed
-            baseTargetLifetime: 8000, // Base lifetime for reset
-            baseSpawnRate: 0.004, // Base spawn rate for reset
-            baseTargetSpeed: 0.8 // Base speed for reset
+            maxTargets: 8, // Maximum possible targets on screen
+            targetSpeed: 1.2, // Slightly increased speed
+            baseTargetLifetime: 6000,
+            baseDesiredTargets: 4,
+            baseTargetSpeed: 1.2
         };
 
         // Mouse tracking
@@ -564,7 +217,7 @@
 
         // Target creation function
         function createTarget() {
-            const size = 40 + Math.random() * 30;
+            const size = 35 + Math.random() * 25; // Slightly smaller for more action
             const colors = ['#ff00ff', '#00ffff', '#ffff00', '#ff0080', '#80ff00'];
             
             // Random initial direction for movement
@@ -577,21 +230,27 @@
                 lifetime: gameState.targetLifetime,
                 maxLifetime: gameState.targetLifetime,
                 hit: false,
-                points: Math.floor(100 / size * 40),
+                points: Math.floor(120 / size * 35), // Adjusted scoring
                 color: colors[Math.floor(Math.random() * colors.length)],
                 glowIntensity: Math.random() * 0.5 + 0.5,
                 pulsePhase: Math.random() * Math.PI * 2,
-                // Movement properties
                 vx: Math.cos(angle) * gameState.targetSpeed,
                 vy: Math.sin(angle) * gameState.targetSpeed,
-                bounceCount: 0 // Track how many times it has bounced
+                bounceCount: 0
             };
+        }
+
+        // Ensure we always have the desired number of targets
+        function maintainTargetCount() {
+            while (targets.length < gameState.desiredTargets && targets.length < gameState.maxTargets) {
+                targets.push(createTarget());
+            }
         }
 
         // Bullet creation function
         function createBullet(startX, startY, targetX, targetY) {
             const angle = Math.atan2(targetY - startY, targetX - startX);
-            const speed = 15;
+            const speed = 18; // Slightly faster bullets
             
             return {
                 x: startX,
@@ -599,7 +258,7 @@
                 vx: Math.cos(angle) * speed,
                 vy: Math.sin(angle) * speed,
                 size: 3,
-                life: 100
+                life: 80 // Reduced bullet life for quicker cleanup
             };
         }
 
@@ -627,6 +286,20 @@
             const time = Date.now() * 0.005;
             
             ctx.save();
+            
+            // Update target movement with boundary bouncing
+            target.x += target.vx;
+            target.y += target.vy;
+            
+            // Bounce off boundaries
+            if (target.x <= 0 || target.x >= canvas.width - target.size) {
+                target.vx = -target.vx;
+                target.x = Math.max(0, Math.min(canvas.width - target.size, target.x));
+            }
+            if (target.y <= 50 || target.y >= canvas.height - target.size - 50) {
+                target.vy = -target.vy;
+                target.y = Math.max(50, Math.min(canvas.height - target.size - 50, target.y));
+            }
             
             // Pulsating glow effect
             const glowSize = 20 + Math.sin(time + target.pulsePhase) * 8;
@@ -922,18 +595,17 @@
             // Update game time and difficulty
             gameState.gameTime += deltaTime;
             
-            // Increase difficulty every 20 seconds (increased from 15)
-            if (Math.floor(gameState.gameTime / 20000) > gameState.lastDifficultyIncrease) {
-                gameState.targetLifetime = Math.max(4000, gameState.targetLifetime - 500); // Minimum 4 seconds
-                gameState.spawnRate = Math.min(0.008, gameState.spawnRate + 0.001); // Slower increase
-                gameState.maxTargets = Math.min(6, gameState.maxTargets + 1); // Gradually increase max targets
-                gameState.lastDifficultyIncrease = Math.floor(gameState.gameTime / 20000);
+            // Increase difficulty every 15 seconds
+            const difficultyLevel = Math.floor(gameState.gameTime / 15000);
+            if (difficultyLevel > gameState.lastDifficultyIncrease) {
+                gameState.targetLifetime = Math.max(3000, gameState.targetLifetime - 400); // Faster decay
+                gameState.desiredTargets = Math.min(7, gameState.desiredTargets + 1); // More targets faster
+                gameState.targetSpeed += 0.3; // Increase speed more gradually
+                gameState.lastDifficultyIncrease = difficultyLevel;
             }
             
-            // Spawn new targets (only if under max limit)
-            if (Math.random() < gameState.spawnRate && targets.length < gameState.maxTargets) {
-                targets.push(createTarget());
-            }
+            // Always maintain desired target count
+            maintainTargetCount();
             
             // Update targets
             for (let i = targets.length - 1; i >= 0; i--) {
@@ -945,6 +617,9 @@
                     targets.splice(i, 1);
                     gameState.hearts--;
                     createParticles(target.x + target.size/2, target.y + target.size/2, '#ff0000');
+                    
+                    // Immediately spawn a new target to replace the missed one
+                    maintainTargetCount();
                     
                     if (gameState.hearts <= 0) {
                         endGame();
@@ -980,6 +655,9 @@
                         // Remove bullet and target
                         bullets.splice(i, 1);
                         targets.splice(j, 1);
+                        
+                        // Immediately spawn a new target to replace the hit one
+                        maintainTargetCount();
                         break;
                     }
                 }
@@ -1053,15 +731,18 @@
             gameState.score = 0;
             gameState.hearts = 3;
             gameState.gameRunning = true;
-            gameState.targetLifetime = 8000;
-            gameState.spawnRate = 0.003;
+            gameState.targetLifetime = gameState.baseTargetLifetime;
+            gameState.desiredTargets = gameState.baseDesiredTargets;
+            gameState.targetSpeed = gameState.baseTargetSpeed;
             gameState.gameTime = 0;
             gameState.lastDifficultyIncrease = 0;
-            gameState.maxTargets = 3;
             
             targets = [];
             bullets = [];
             particles = [];
+            
+            // Start with initial targets
+            maintainTargetCount();
             
             gameOverText.style.display = 'none';
         }

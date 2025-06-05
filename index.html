@@ -1,0 +1,1112 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catch the Falling Stars</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e2133, #1e3c72);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        .game-container {
+            text-align: center;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        
+        canvas {
+            border: 3px solid #ffd700;
+            border-radius: 10px;
+            background: linear-gradient(180deg, #001122, #11181f);
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .instructions {
+            color: #ffd700;
+            margin-top: 15px;
+            font-size: 16px;
+        }
+        
+        .game-over {
+            color: #ff6b6b;
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="instructions">
+            Use ← → arrow keys to move the basket and catch falling stars!
+        </div>
+        <div id="gameOverText" class="game-over" style="display: none;">
+            Game Over! Press R to restart
+        </div>
+    </div>
+
+    <script>
+        // Canvas and context setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverText = document.getElementById('gameOverText');
+
+        // Game state variables
+        let gameState = {
+            score: 0,
+            highScore: localStorage.getItem('starCatcherHighScore') || 0,
+            hearts: 3,
+            consecutiveMisses: 0,
+            timeLeft: 60,
+            gameRunning: true,
+            starSpeed: 2,
+            lastSpeedIncrease: 0
+        };
+
+        // Game objects
+        let basket = {
+            x: 375,
+            y: 550,
+            width: 100,
+            height: 20,
+            speed: 8
+        };
+
+        let stars = [];
+        let keys = {};
+
+        // Star creation function
+        function createStar() {
+            return {
+                x: Math.random() * (canvas.width - 20),
+                y: -20,
+                size: 15,
+                speed: gameState.starSpeed + Math.random() * 2,
+                caught: false
+            };
+        }
+
+        // Draw star as five-point polygon
+        function drawStar(x, y, size) {
+            ctx.fillStyle = '#ffd700';
+            ctx.strokeStyle = '#ffed4e';
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const angle = (i * 144 - 90) * Math.PI / 180;
+                const outerRadius = size;
+                const innerRadius = size * 0.4;
+                
+                // Outer point
+                let px = x + Math.cos(angle) * outerRadius;
+                let py = y + Math.sin(angle) * outerRadius;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+                
+                // Inner point
+                const innerAngle = ((i * 144) + 72 - 90) * Math.PI / 180;
+                px = x + Math.cos(innerAngle) * innerRadius;
+                py = y + Math.sin(innerAngle) * innerRadius;
+                ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        // Draw basket as brown rectangle
+        function drawBasket() {
+            ctx.fillStyle = '#8B4513';
+            ctx.strokeStyle = '#654321';
+            ctx.lineWidth = 2;
+            
+            ctx.fillRect(basket.x, basket.y, basket.width, basket.height);
+            ctx.strokeRect(basket.x, basket.y, basket.width, basket.height);
+            
+            // Add basket handle details
+            ctx.fillStyle = '#A0522D';
+            ctx.fillRect(basket.x + 5, basket.y + 5, basket.width - 10, basket.height - 10);
+        }
+
+        // Draw hearts in top area
+        function drawHearts() {
+            for (let i = 0; i < 3; i++) {
+                const x = canvas.width - 150 + i * 30;
+                const y = 40;
+                
+                if (i < gameState.hearts) {
+                    ctx.fillStyle = '#ff0000';
+                } else {
+                    ctx.fillStyle = '#333333';
+                }
+                
+                // Draw heart shape
+                ctx.beginPath();
+                ctx.arc(x - 5, y - 3, 6, 0, Math.PI * 2);
+                ctx.arc(x + 5, y - 3, 6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.moveTo(x - 10, y + 2);
+                ctx.lineTo(x, y + 12);
+                ctx.lineTo(x + 10, y + 2);
+                ctx.fill();
+            }
+        }
+
+        // Draw UI elements
+        function drawUI() {
+            ctx.fillStyle = '#ffd700';
+            ctx.font = '20px Arial';
+            
+            // Score (top-left)
+            ctx.fillText(`Score: ${gameState.score}`, 20, 30);
+            
+            // High Score (top-right)
+            ctx.fillText(`High Score: ${gameState.highScore}`, canvas.width - 200, 30);
+            
+            // Timer (top-center)
+            ctx.fillText(`Time: ${Math.ceil(gameState.timeLeft)}s`, canvas.width / 2 - 40, 30);
+            
+            // Draw hearts
+            drawHearts();
+        }
+
+        // Collision detection
+        function checkCollision(star, basket) {
+            return star.x < basket.x + basket.width &&
+                   star.x + star.size * 2 > basket.x &&
+                   star.y < basket.y + basket.height &&
+                   star.y + star.size * 2 > basket.y;
+        }
+
+        // Update game logic
+        function updateGame(deltaTime) {
+            if (!gameState.gameRunning) return;
+            
+            // Update timer
+            gameState.timeLeft -= deltaTime / 1000;
+            if (gameState.timeLeft <= 0) {
+                endGame();
+                return;
+            }
+            
+            // Increase speed every 15 seconds
+            const currentTime = 60 - gameState.timeLeft;
+            if (Math.floor(currentTime / 15) > gameState.lastSpeedIncrease) {
+                gameState.starSpeed += 1;
+                gameState.lastSpeedIncrease = Math.floor(currentTime / 15);
+            }
+            
+            // Move basket based on key input
+            if (keys['ArrowLeft'] && basket.x > 0) {
+                basket.x -= basket.speed;
+            }
+            if (keys['ArrowRight'] && basket.x < canvas.width - basket.width) {
+                basket.x += basket.speed;
+            }
+            
+            // Spawn new stars randomly
+            if (Math.random() < 0.02) {
+                stars.push(createStar());
+            }
+            
+            // Update stars
+            let missedThisFrame = false;
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const star = stars[i];
+                star.y += star.speed;
+                
+                // Check collision with basket
+                if (checkCollision(star, basket) && !star.caught) {
+                    star.caught = true;
+                    gameState.score++;
+                    gameState.consecutiveMisses = 0;
+                    stars.splice(i, 1);
+                    continue;
+                }
+                
+                // Remove stars that fall off screen
+                if (star.y > canvas.height) {
+                    stars.splice(i, 1);
+                    if (!star.caught && !missedThisFrame) {
+                        gameState.consecutiveMisses++;
+                        missedThisFrame = true;
+                        
+                        // Lose heart after 3 consecutive misses
+                        if (gameState.consecutiveMisses >= 3) {
+                            gameState.hearts--;
+                            gameState.consecutiveMisses = 0;
+                            
+                            if (gameState.hearts <= 0) {
+                                endGame();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Render game graphics
+        function render() {
+            // Clear canvas with gradient background
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#001122');
+            gradient.addColorStop(1, '#003366');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            stars.forEach(star => {
+                drawStar(star.x + star.size, star.y + star.size, star.size);
+            });
+            
+            // Draw basket
+            drawBasket();
+            
+            // Draw UI
+            drawUI();
+        }
+
+        // End game function
+        function endGame() {
+            gameState.gameRunning = false;
+            
+            // Update high score
+            if (gameState.score > gameState.highScore) {
+                gameState.highScore = gameState.score;
+                localStorage.setItem('starCatcherHighScore', gameState.highScore);
+            }
+            
+            gameOverText.style.display = 'block';
+        }
+
+        // Reset game function
+        function resetGame() {
+            gameState.score = 0;
+            gameState.hearts = 3;
+            gameState.consecutiveMisses = 0;
+            gameState.timeLeft = 60;
+            gameState.gameRunning = true;
+            gameState.starSpeed = 2;
+            gameState.lastSpeedIncrease = 0;
+            
+            basket.x = 375;
+            stars = [];
+            
+            gameOverText.style.display = 'none';
+        }
+
+        // Event listeners for keyboard input
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            // Restart game with R key
+            if (e.key.toLowerCase() === 'r' && !gameState.gameRunning) {
+                resetGame();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Main game loop
+        let lastTime = 0;
+        function gameLoop(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            updateGame(deltaTime);
+            render();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize and start the game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Target Hunter - Cyberpunk</title>
+    <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Bungee&family=Russo+One:wght@400&family=Teko:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            background-image: 
+                radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 40% 80%, rgba(120, 255, 198, 0.3) 0%, transparent 50%);
+            font-family: 'Teko', sans-serif;
+            color: #00ffff;
+            overflow: hidden;
+            min-height: 100vh;
+            cursor: none;
+            position: relative;
+        }
+        
+        .game-title {
+            text-align: center;
+            padding: 20px 0;
+            font-family: 'Black Ops One', cursive;
+            font-size: clamp(2.5rem, 8vw, 6rem);
+            font-weight: 400;
+            background: linear-gradient(45deg, #ff00ff, #00ffff, #ffff00, #ff00ff);
+            background-size: 400% 400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: neonGlow 2s ease-in-out infinite alternate, gradientShift 4s ease-in-out infinite;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            transform: perspective(500px) rotateX(15deg);
+        }
+        
+        @keyframes neonGlow {
+            from {
+                filter: drop-shadow(0 0 5px #00ffff) drop-shadow(0 0 15px #00ffff) drop-shadow(0 0 20px #00ffff);
+            }
+            to {
+                filter: drop-shadow(0 0 10px #ff00ff) drop-shadow(0 0 25px #ff00ff) drop-shadow(0 0 35px #ff00ff);
+            }
+        }
+        
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .game-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            position: relative;
+        }
+        
+        canvas {
+            border: 3px solid;
+            border-image: linear-gradient(45deg, #ff00ff, #00ffff, #ffff00, #ff00ff) 1;
+            background: radial-gradient(circle at center, rgba(0, 0, 0, 0.9) 0%, #000 100%);
+            box-shadow: 
+                0 0 20px rgba(0, 255, 255, 0.5),
+                0 0 40px rgba(255, 0, 255, 0.3),
+                inset 0 0 20px rgba(0, 255, 255, 0.1);
+            border-radius: 10px;
+            cursor: none;
+        }
+        
+        .instructions {
+            text-align: center;
+            margin-top: 20px;
+            font-family: 'Russo One', sans-serif;
+            color: #00ffff;
+            font-size: 1.2rem;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        
+        .game-over {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-family: 'Bungee', cursive;
+            color: #ff00ff;
+            font-size: 3rem;
+            text-shadow: 
+                0 0 20px rgba(255, 0, 255, 1),
+                0 0 40px rgba(255, 0, 255, 0.8),
+                0 0 60px rgba(255, 0, 255, 0.6);
+            animation: gameOverPulse 1.5s infinite, gameOverGlow 2s ease-in-out infinite alternate;
+            display: none;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px 60px;
+            border: 3px solid #ff00ff;
+            border-radius: 20px;
+            box-shadow: 
+                0 0 30px rgba(255, 0, 255, 0.8),
+                inset 0 0 30px rgba(255, 0, 255, 0.2);
+        }
+        
+        .game-over .subtitle {
+            font-family: 'Teko', sans-serif;
+            font-weight: 600;
+            letter-spacing: 3px;
+            font-size: 1.2rem;
+            margin-top: 20px;
+            color: #00ffff;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.8);
+        }
+        
+        .game-over .score-display {
+            font-family: 'Russo One', sans-serif;
+            font-size: 1.5rem;
+            margin: 15px 0;
+            color: #ffff00;
+            text-shadow: 0 0 15px rgba(255, 255, 0, 0.8);
+        }
+        
+        @keyframes gameOverPulse {
+            0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.05); }
+        }
+        
+        @keyframes gameOverGlow {
+            from {
+                box-shadow: 
+                    0 0 30px rgba(255, 0, 255, 0.8),
+                    inset 0 0 30px rgba(255, 0, 255, 0.2);
+            }
+            to {
+                box-shadow: 
+                    0 0 50px rgba(255, 0, 255, 1),
+                    inset 0 0 40px rgba(255, 0, 255, 0.4);
+            }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-title">TARGET HUNTER</div>
+    
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
+    
+    <div class="instructions">
+        🎯 AIM WITH MOUSE • CLICK TO FIRE LASER • DON'T LET TARGETS ESCAPE! 🎯
+    </div>
+    
+    <div id="gameOverText" class="game-over">
+        ⚡ GAME OVER ⚡
+        <div class="score-display" id="finalScore">FINAL SCORE: 0</div>
+        <div class="score-display" id="bestScore">BEST SCORE: 0</div>
+        <div class="subtitle">PRESS [R] TO REBOOT SYSTEM</div>
+    </div>
+
+    <script>
+        // Canvas and context setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverText = document.getElementById('gameOverText');
+        const finalScoreElement = document.getElementById('finalScore');
+        const bestScoreElement = document.getElementById('bestScore');
+
+        // Game state variables
+        let gameState = {
+            score: 0,
+            highScore: 0, // Removed localStorage for Claude.ai compatibility
+            hearts: 3,
+            gameRunning: true,
+            targetLifetime: 8000, // Target disappearing time
+            spawnRate: 0.004, // Target spawning frequency
+            gameTime: 0,
+            lastDifficultyIncrease: 0,
+            maxTargets: 3, // Maximum targets on screen at once
+            targetSpeed: 0.8, // New: Target movement speed
+            baseTargetLifetime: 8000, // Base lifetime for reset
+            baseSpawnRate: 0.004, // Base spawn rate for reset
+            baseTargetSpeed: 0.8 // Base speed for reset
+        };
+
+        // Mouse tracking
+        let mouse = {
+            x: 0,
+            y: 0,
+            clicked: false
+        };
+
+        // Game objects
+        let targets = [];
+        let bullets = [];
+        let particles = [];
+
+        // Target creation function
+        function createTarget() {
+            const size = 40 + Math.random() * 30;
+            const colors = ['#ff00ff', '#00ffff', '#ffff00', '#ff0080', '#80ff00'];
+            
+            // Random initial direction for movement
+            const angle = Math.random() * Math.PI * 2;
+            
+            return {
+                x: Math.random() * (canvas.width - size),
+                y: Math.random() * (canvas.height - size - 100) + 50,
+                size: size,
+                lifetime: gameState.targetLifetime,
+                maxLifetime: gameState.targetLifetime,
+                hit: false,
+                points: Math.floor(100 / size * 40),
+                color: colors[Math.floor(Math.random() * colors.length)],
+                glowIntensity: Math.random() * 0.5 + 0.5,
+                pulsePhase: Math.random() * Math.PI * 2,
+                // Movement properties
+                vx: Math.cos(angle) * gameState.targetSpeed,
+                vy: Math.sin(angle) * gameState.targetSpeed,
+                bounceCount: 0 // Track how many times it has bounced
+            };
+        }
+
+        // Bullet creation function
+        function createBullet(startX, startY, targetX, targetY) {
+            const angle = Math.atan2(targetY - startY, targetX - startX);
+            const speed = 15;
+            
+            return {
+                x: startX,
+                y: startY,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                size: 3,
+                life: 100
+            };
+        }
+
+        // Particle creation for hit effects
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 12; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    life: 40,
+                    maxLife: 40,
+                    color: color,
+                    size: Math.random() * 6 + 2
+                });
+            }
+        }
+
+        // Draw cyberpunk target
+        function drawTarget(target) {
+            const x = target.x + target.size / 2;
+            const y = target.y + target.size / 2;
+            const radius = target.size / 2;
+            const time = Date.now() * 0.005;
+            
+            ctx.save();
+            
+            // Pulsating glow effect
+            const glowSize = 20 + Math.sin(time + target.pulsePhase) * 8;
+            ctx.shadowColor = target.color;
+            ctx.shadowBlur = glowSize * target.glowIntensity;
+            
+            // Life indicator as outer ring
+            const lifeRatio = target.lifetime / target.maxLifetime;
+            
+            // Outer energy ring
+            ctx.strokeStyle = target.color;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(x, y, radius + 15, -Math.PI/2, -Math.PI/2 + (Math.PI * 2 * lifeRatio));
+            ctx.stroke();
+            
+            // Main target circles with cyberpunk style
+            const rings = 4;
+            for (let i = rings; i > 0; i--) {
+                const ringRadius = (radius * i) / rings;
+                
+                // Alternating neon colors
+                if (i % 2 === 0) {
+                    ctx.fillStyle = target.color;
+                } else {
+                    ctx.fillStyle = i === 1 ? '#ffffff' : target.color + '80';
+                }
+                
+                ctx.beginPath();
+                ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Neon ring border
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            
+            // Center holographic effect
+            const centerGradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 0.3);
+            centerGradient.addColorStop(0, '#ffffff');
+            centerGradient.addColorStop(0.5, target.color);
+            centerGradient.addColorStop(1, 'transparent');
+            
+            ctx.fillStyle = centerGradient;
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Digital crosshair in center
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            const crossSize = radius * 0.15;
+            
+            ctx.beginPath();
+            ctx.moveTo(x - crossSize, y);
+            ctx.lineTo(x + crossSize, y);
+            ctx.moveTo(x, y - crossSize);
+            ctx.lineTo(x, y + crossSize);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        // Draw cyberpunk crosshair
+        function drawCrosshair() {
+            ctx.save();
+            
+            // Outer neon ring
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#00ffff';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(mouse.x, mouse.y, 25, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Inner targeting ring
+            ctx.strokeStyle = '#ff00ff';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = '#ff00ff';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(mouse.x, mouse.y, 15, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Digital crosshair lines
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = '#ffff00';
+            ctx.shadowBlur = 5;
+            
+            // Horizontal lines
+            ctx.beginPath();
+            ctx.moveTo(mouse.x - 30, mouse.y);
+            ctx.lineTo(mouse.x - 10, mouse.y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(mouse.x + 10, mouse.y);
+            ctx.lineTo(mouse.x + 30, mouse.y);
+            ctx.stroke();
+            
+            // Vertical lines
+            ctx.beginPath();
+            ctx.moveTo(mouse.x, mouse.y - 30);
+            ctx.lineTo(mouse.x, mouse.y - 10);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(mouse.x, mouse.y + 10);
+            ctx.lineTo(mouse.x, mouse.y + 30);
+            ctx.stroke();
+            
+            // Center targeting dot
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(mouse.x, mouse.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        // Draw laser bullets
+        function drawBullet(bullet) {
+            ctx.save();
+            
+            // Laser trail effect
+            const gradient = ctx.createLinearGradient(
+                bullet.x - bullet.vx * 3, bullet.y - bullet.vy * 3,
+                bullet.x, bullet.y
+            );
+            gradient.addColorStop(0, 'transparent');
+            gradient.addColorStop(0.5, '#ff00ff80');
+            gradient.addColorStop(1, '#ff00ff');
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#ff00ff';
+            ctx.shadowBlur = 10;
+            
+            ctx.beginPath();
+            ctx.moveTo(bullet.x - bullet.vx * 3, bullet.y - bullet.vy * 3);
+            ctx.lineTo(bullet.x, bullet.y);
+            ctx.stroke();
+            
+            // Main laser bullet
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ff00ff';
+            ctx.shadowBlur = 15;
+            
+            ctx.beginPath();
+            ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        // Draw neon particles
+        function drawParticle(particle) {
+            const alpha = particle.life / particle.maxLife;
+            
+            ctx.save();
+            ctx.fillStyle = particle.color;
+            ctx.shadowColor = particle.color;
+            ctx.shadowBlur = 15 * alpha;
+            
+            ctx.beginPath();
+            ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        // Draw neon hearts/lives
+        function drawHearts() {
+            for (let i = 0; i < 3; i++) {
+                const x = canvas.width - 180 + i * 40;
+                const y = 40;
+                
+                ctx.save();
+                
+                if (i < gameState.hearts) {
+                    ctx.fillStyle = '#ff00ff';
+                    ctx.shadowColor = '#ff00ff';
+                    ctx.shadowBlur = 15;
+                } else {
+                    ctx.fillStyle = '#330033';
+                    ctx.shadowColor = 'transparent';
+                }
+                
+                // Draw diamond shape instead of star
+                ctx.beginPath();
+                ctx.moveTo(x, y - 10);
+                ctx.lineTo(x + 8, y);
+                ctx.lineTo(x, y + 10);
+                ctx.lineTo(x - 8, y);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Inner glow
+                if (i < gameState.hearts) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - 5);
+                    ctx.lineTo(x + 4, y);
+                    ctx.lineTo(x, y + 5);
+                    ctx.lineTo(x - 4, y);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // Draw cyberpunk UI
+        function drawUI() {
+            ctx.save();
+            
+            // Neon text style with new cyberpunk fonts
+            ctx.font = 'bold 28px "Teko", sans-serif';
+            ctx.shadowBlur = 12;
+            
+            // Score (top-left)
+            ctx.fillStyle = '#00ffff';
+            ctx.shadowColor = '#00ffff';
+            ctx.fillText(`SCORE: ${gameState.score}`, 20, 30);
+            
+            // High Score (top-center)
+            ctx.fillStyle = '#ffff00';
+            ctx.shadowColor = '#ffff00';
+            ctx.fillText(`BEST: ${gameState.highScore}`, canvas.width/2 - 70, 30);
+            
+            // Draw neon lives
+            drawHearts();
+            
+            // Target count with different font
+            ctx.font = 'bold 20px "Russo One", sans-serif';
+            ctx.fillStyle = '#ff00ff';
+            ctx.shadowColor = '#ff00ff';
+            ctx.fillText(`TARGETS: ${targets.length}`, 20, 60);
+            
+            ctx.restore();
+        }
+
+        // Draw cyberpunk background
+        function drawBackground() {
+            // Digital grid
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+            
+            // Vertical lines
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            // Horizontal lines
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Scanning lines effect
+            const time = Date.now() * 0.01;
+            const scanY = (Math.sin(time) * 0.5 + 0.5) * canvas.height;
+            
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, scanY);
+            ctx.lineTo(canvas.width, scanY);
+            ctx.stroke();
+        }
+
+        // Collision detection for bullets and targets
+        function checkBulletTargetCollision(bullet, target) {
+            const dx = bullet.x - (target.x + target.size / 2);
+            const dy = bullet.y - (target.y + target.size / 2);
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance < (bullet.size + target.size / 2);
+        }
+
+        // Update game logic
+        function updateGame(deltaTime) {
+            if (!gameState.gameRunning) return;
+            
+            // Update game time and difficulty
+            gameState.gameTime += deltaTime;
+            
+            // Increase difficulty every 20 seconds (increased from 15)
+            if (Math.floor(gameState.gameTime / 20000) > gameState.lastDifficultyIncrease) {
+                gameState.targetLifetime = Math.max(4000, gameState.targetLifetime - 500); // Minimum 4 seconds
+                gameState.spawnRate = Math.min(0.008, gameState.spawnRate + 0.001); // Slower increase
+                gameState.maxTargets = Math.min(6, gameState.maxTargets + 1); // Gradually increase max targets
+                gameState.lastDifficultyIncrease = Math.floor(gameState.gameTime / 20000);
+            }
+            
+            // Spawn new targets (only if under max limit)
+            if (Math.random() < gameState.spawnRate && targets.length < gameState.maxTargets) {
+                targets.push(createTarget());
+            }
+            
+            // Update targets
+            for (let i = targets.length - 1; i >= 0; i--) {
+                const target = targets[i];
+                target.lifetime -= deltaTime;
+                
+                // Remove expired targets (missed)
+                if (target.lifetime <= 0 && !target.hit) {
+                    targets.splice(i, 1);
+                    gameState.hearts--;
+                    createParticles(target.x + target.size/2, target.y + target.size/2, '#ff0000');
+                    
+                    if (gameState.hearts <= 0) {
+                        endGame();
+                        return;
+                    }
+                }
+            }
+            
+            // Update bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+                bullet.life--;
+                
+                // Remove bullets that are off screen or expired
+                if (bullet.x < 0 || bullet.x > canvas.width || 
+                    bullet.y < 0 || bullet.y > canvas.height || bullet.life <= 0) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+                
+                // Check collision with targets
+                for (let j = targets.length - 1; j >= 0; j--) {
+                    const target = targets[j];
+                    if (checkBulletTargetCollision(bullet, target) && !target.hit) {
+                        target.hit = true;
+                        gameState.score += target.points;
+                        
+                        // Create hit particles
+                        createParticles(bullet.x, bullet.y, target.color);
+                        
+                        // Remove bullet and target
+                        bullets.splice(i, 1);
+                        targets.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // Render game graphics
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background effects
+            drawBackground();
+            
+            // Draw targets
+            targets.forEach(target => {
+                if (!target.hit) drawTarget(target);
+            });
+            
+            // Draw bullets
+            bullets.forEach(bullet => {
+                drawBullet(bullet);
+            });
+            
+            // Draw particles
+            particles.forEach(particle => {
+                drawParticle(particle);
+            });
+            
+            // Draw UI
+            drawUI();
+            
+            // Draw crosshair (always on top)
+            if (gameState.gameRunning) {
+                drawCrosshair();
+            }
+        }
+
+        // End game function
+        function endGame() {
+            gameState.gameRunning = false;
+            
+            // Update high score
+            if (gameState.score > gameState.highScore) {
+                gameState.highScore = gameState.score;
+            }
+            
+            // Update score displays
+            finalScoreElement.textContent = `FINAL SCORE: ${gameState.score}`;
+            bestScoreElement.textContent = `BEST SCORE: ${gameState.highScore}`;
+            
+            // Show game over screen
+            gameOverText.style.display = 'block';
+        }
+
+        // Reset game function
+        function resetGame() {
+            gameState.score = 0;
+            gameState.hearts = 3;
+            gameState.gameRunning = true;
+            gameState.targetLifetime = 8000;
+            gameState.spawnRate = 0.003;
+            gameState.gameTime = 0;
+            gameState.lastDifficultyIncrease = 0;
+            gameState.maxTargets = 3;
+            
+            targets = [];
+            bullets = [];
+            particles = [];
+            
+            gameOverText.style.display = 'none';
+        }
+
+        // Mouse event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState.gameRunning) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                
+                // Create bullet from center of screen toward click position
+                bullets.push(createBullet(canvas.width / 2, canvas.height - 50, clickX, clickY));
+            }
+        });
+
+        // Keyboard event listeners
+        document.addEventListener('keydown', (e) => {
+            // Restart game with R key
+            if (e.key.toLowerCase() === 'r' && !gameState.gameRunning) {
+                resetGame();
+            }
+        });
+
+        // Main game loop
+        let lastTime = 0;
+        function gameLoop(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            updateGame(deltaTime);
+            render();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize and start the game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

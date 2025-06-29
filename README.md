@@ -1,6 +1,6 @@
 # WEB-game
 
 It is shooting game of targets in neon theme.
-Made by Sardar Sadiq.
+Made by Sardar sadiq.
 
 clone the project and pls don't forget to give a star.
